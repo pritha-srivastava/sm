@@ -86,6 +86,12 @@ class FileSR(SR.SR):
         else:
             self.o_direct = True
 
+
+    def __init__(self, srcmd, sr_uuid):
+        super(FileSR, self).__init__(srcmd, sr_uuid)
+        self._check_o_direct()
+
+
     def load(self, sr_uuid):
         self.ops_exclusive = OPS_EXCLUSIVE
         self.lock = Lock(vhdutil.LOCK_TYPE_SR, self.uuid)
@@ -96,8 +102,6 @@ class FileSR(SR.SR):
         self.path = os.path.join(SR.MOUNT_BASE, sr_uuid)
         self.attached = False
         self.driver_config = DRIVER_CONFIG
-
-        self._check_o_direct()
 
     def create(self, sr_uuid, size):
         """ Create the SR.  The path must not already exist, or if it does, 
