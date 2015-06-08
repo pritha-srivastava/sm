@@ -692,7 +692,8 @@ class FileVDI(VDI.VDI):
 
     def _do_snapshot(self, sr_uuid, vdi_uuid, snap_type, secondary=None):
         if self.vdi_type != vhdutil.VDI_TYPE_VHD:
-            raise xs_errors.XenError('Unimplemented')
+            raise xs_errors.XenError('Inapplicable', \
+		opterr='Raw VDI, snapshot or clone not permitted')
 
         if not blktap2.VDI.tap_pause(self.session, sr_uuid, vdi_uuid):
             raise util.SMException("failed to pause VDI %s" % vdi_uuid)

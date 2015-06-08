@@ -1651,7 +1651,7 @@ class LVHDVDI(VDI.VDI):
                 self.sr.srcmd.params['vdi_ref'])
         if self.sm_config.has_key("type") and self.sm_config['type']=='raw':
             if not util.fistpoint.is_active("testsm_clone_allow_raw"):
-                raise xs_errors.XenError('Unimplemented', \
+                raise xs_errors.XenError('Inapplicable', \
                         opterr='Raw VDI, snapshot or clone not permitted')
 
         # we must activate the entire VHD chain because the real parent could 

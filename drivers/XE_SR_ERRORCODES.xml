@@ -57,7 +57,11 @@
                 <description>The SCSIid parameter is missing or incorrect</description>
                 <value>107</value>
         </code>
-
+	<code>
+		<name>Inapplicable</name>
+		<description>The requested method is not applicable</description>
+		<value>117</value>
+	</code>
 	<!-- codes used by agent-internal backends (such as ISO driver); allocated from 1000 -->
         <code>
                 <name>ISODconfMissingLocation</name>
