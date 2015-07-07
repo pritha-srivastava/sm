@@ -1,6 +1,6 @@
 #!/usr/bin/python
-# Copyright (C) 2006-2007 XenSource Ltd.
-# Copyright (C) 2008-2009 Citrix Ltd.
+#
+# Copyright (C) Citrix Systems Inc.
 #
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU Lesser General Public License as published
@@ -10,6 +10,10 @@
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 # GNU Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public License
+# along with this program; if not, write to the Free Software Foundation, Inc.,
+# 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 #
 # CIFSSR: CIFS filesystem based storage repository
 
@@ -37,7 +41,7 @@ DRIVER_INFO = {
     'name': 'CIFS VHD',
     'description': 'SR plugin which stores disks as VHD files on a remote CIFS filesystem',
     'vendor': 'Citrix Systems Inc',
-    'copyright': '(C) 2008 Citrix Systems Inc',
+    'copyright': '(C) 2015 Citrix Systems Inc',
     'driver_version': '1.0',
     'required_api_version': '1.0',
     'capabilities': CAPABILITIES,
@@ -52,8 +56,8 @@ class CifsException(Exception):
 
 # server = //cifs-server/vol1 - ie the export path on the CIFS server 
 # mountpoint = /var/run/sr-mount/CIFS/<cifs_server_name>/<share_name>/uuid
-# path = /var/run/sr-mount/uuid
-# linkpath = mountpoint/uuid 
+# linkpath = mountpoint/uuid - path to SR directory on share
+# path = /var/run/sr-mount/uuid - symlink to SR directory on share
 class CIFSSR(FileSR.FileSR):
     """CIFS file-based storage repository"""
     def handles(type):
@@ -68,26 +72,26 @@ class CIFSSR(FileSR.FileSR):
         if not self.dconf.has_key('server'):
             raise xs_errors.XenError('ConfigServerMissing')
         self.remoteserver = self.dconf['server']
-        self.nosubdir = False
         if self.sr_ref and self.session is not None :
             self.sm_config = self.session.xenapi.SR.get_sm_config(self.sr_ref)
         else:
             self.sm_config = self.srcmd.params.get('sr_sm_config') or {}
-        self.nosubdir = self.sm_config.get('nosubdir') == "true"
         self.credentials = None
-        self.mountpoint = os.path.join(SR.MOUNT_BASE, 'CIFS', self._extract_server(), sr_uuid)
+        self.mountpoint = os.path.join(SR.MOUNT_BASE, 'CIFS', self.__extract_server(), sr_uuid)
         self.linkpath = os.path.join(self.mountpoint, 
-                                           not self.nosubdir and sr_uuid or "")
+                                           sr_uuid or "")
+        # Remotepath is the absolute path inside a share that is to be mounted
+        # For a CIFS SR, only the root can be mounted.
+        self.remotepath = ''
         self.path = os.path.join(SR.MOUNT_BASE, sr_uuid)
         self._check_o_direct()
 
-    def _checkmount(self):
+    def __checkmount(self):
         return util.ioretry(lambda: ((util.pathexists(self.mountpoint) and \
 				util.ismount(self.mountpoint)) and \
                                 util.pathexists(self.linkpath)))
 
-
-    def mount(self):
+    def __mount(self):
         """Mount the remote CIFS export at 'mountpoint'"""
         try:
             if not util.ioretry(lambda: util.isdir(self.mountpoint)):
@@ -126,7 +130,7 @@ class CIFSSR(FileSR.FileSR):
         except util.CommandException, inst:
             raise CifsException("mount failed with return code %d" % inst.code)
 
-    def unmount(self, mountpoint, rmmountpoint):
+    def __unmount(self, mountpoint, rmmountpoint):
         """Unmount the remote CIFS export at 'mountpoint'"""
         try:
             util.pread(["umount", mountpoint])
@@ -139,11 +143,10 @@ class CIFSSR(FileSR.FileSR):
             except OSError, inst:
                 raise CifsException("rmdir failed with error '%s'" % inst.strerror)
 
-
-    def _extract_server(self):
+    def __extract_server(self):
         return self.remoteserver[2:]
 
-    def _check_license(self):
+    def __check_license(self):
         """Raises an exception if CIFS is not licensed."""
         if self.session is None or (isinstance(self.session, str) and \
                 self.session == ""):
@@ -154,23 +157,22 @@ class CIFSSR(FileSR.FileSR):
                 restrictions['restrict_cifs'] == "true":
             raise xs_errors.XenError('NoCifsLicense')
 
-
     def attach(self, sr_uuid):
-        if not self._checkmount():
+        if not self.__checkmount():
             try: 
-                self.mount()
+                self.__mount()
                 os.symlink(self.linkpath, self.path)
             except CifsException, exc:
                 raise xs_errors.XenError('CIFSMount', opterr=exc.errstr)
         self.attached = True
 
-
     def probe(self):
+        #TODO: Implement probe
         pass
 
     def detach(self, sr_uuid):
         """Detach the SR: Unmounts and removes the mountpoint"""
-        if not self._checkmount():
+        if not self.__checkmount():
             return
         util.SMlog("Aborting GC/coalesce")
         cleanup.abort(self.uuid)
@@ -179,22 +181,21 @@ class CIFSSR(FileSR.FileSR):
         os.chdir(SR.MOUNT_BASE)
 
         try:
-            self.unmount(self.mountpoint, True)
+            self.__unmount(self.mountpoint, True)
             os.unlink(self.path)
         except CifsException, exc:
             raise xs_errors.XenError('CIFSUnMount', opterr=exc.errstr)
 
         self.attached = False
-
         
     def create(self, sr_uuid, size):
-        self._check_license()
+        self.__check_license()
 
-        if self._checkmount():
+        if self.__checkmount():
             raise xs_errors.XenError('CIFSAttached')
 
         try:
-            self.mount() 
+            self.__mount()
         except CifsException, exc:
             try:
                 os.rmdir(self.mountpoint)
@@ -222,13 +223,13 @@ class CIFSSR(FileSR.FileSR):
         # try to remove/delete non VDI contents first
         super(CIFSSR, self).delete(sr_uuid)
         try:
-            if self._checkmount():
+            if self.__checkmount():
                 self.detach(sr_uuid)
 
-            self.mount()
+            self.__mount()
             if util.ioretry(lambda: util.pathexists(self.linkpath)):
                 util.ioretry(lambda: os.rmdir(self.linkpath))
-            self.unmount(self.mountpoint, True)
+            self.__unmount(self.mountpoint, True)
         except util.CommandException, inst:
             self.detach(sr_uuid)
             if inst.code != errno.ENOENT:
