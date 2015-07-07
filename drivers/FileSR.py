@@ -301,7 +301,10 @@ class FileSR(SR.SR):
                 del self.vdis[uuid]
 
     def _getsize(self):
-        return util.get_fs_size(self.linkpath)
+        path = self.path
+        if self.handles("cifs"):
+            path = self.linkpath
+        return util.get_fs_size(path)
     
     def _getutilisation(self):
         return util.get_fs_utilisation(self.path)
