@@ -157,8 +157,11 @@ class CIFSSR(FileSR.FileSR):
 
     def attach(self, sr_uuid):
         if not self._checkmount():
-            self.mount()
-            os.symlink(self.linkpath, self.path)
+            try: 
+                self.mount()
+                os.symlink(self.linkpath, self.path)
+            except CifsException, exc:
+                raise xs_errors.XenError('CIFSMount', opterr=exc.errstr)
         self.attached = True
 
 
@@ -192,13 +195,12 @@ class CIFSSR(FileSR.FileSR):
 
         try:
             self.mount() 
-        except Exception, exn:
+        except CifsException, exc:
             try:
                 os.rmdir(self.mountpoint)
             except:
                 pass
-            # TODO: Raise meaningful exception here
-            raise exn
+            raise xs_errors.XenError('CIFSMount', opterr=exc.errstr)
 
         if util.ioretry(lambda: util.pathexists(self.linkpath)):
             if len(util.ioretry(lambda: util.listdir(self.linkpath))) != 0:
