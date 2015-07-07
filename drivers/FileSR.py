@@ -100,6 +100,7 @@ class FileSR(SR.SR):
             raise xs_errors.XenError('ConfigLocationMissing')
         self.remotepath = self.dconf['location']
         self.path = os.path.join(SR.MOUNT_BASE, sr_uuid)
+        self.linkpath = self.path
         self.attached = False
         self.driver_config = DRIVER_CONFIG
 
@@ -203,10 +204,15 @@ class FileSR(SR.SR):
         # CA-15607: make sure we are robust to the directory being unmounted beneath
         # us (eg by a confused user). Without this we might forget all our VDI references
         # which would be a shame.
-        if not self.handles("file") and not os.path.ismount(self.path):
-            util.SMlog("Error: FileSR.scan called but directory %s isn't a mountpoint" % self.path)
+        # For CIFS SRs, this path is linkpath
+        mount_path = self.path
+        if self.handles("cifs"):
+            mount_path = self.linkpath
+
+        if not (self.handles("file") or self.handles("cifs")) and not os.path.ismount(mount_path):
+            util.SMlog("Error: FileSR.scan called but directory %s isn't a mountpoint" % mount_path)
             raise xs_errors.XenError('SRUnavailable', \
-                                     opterr='not mounted %s' % self.path)
+                                     opterr='not mounted %s' % mount_path)
 
         self._kickGC()
 
@@ -295,7 +301,7 @@ class FileSR(SR.SR):
                 del self.vdis[uuid]
 
     def _getsize(self):
-        return util.get_fs_size(self.path)
+        return util.get_fs_size(self.linkpath)
     
     def _getutilisation(self):
         return util.get_fs_utilisation(self.path)
