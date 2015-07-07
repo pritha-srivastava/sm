@@ -91,11 +91,16 @@ class CIFSSR(FileSR.FileSR):
 				util.ismount(self.mountpoint)) and \
                                 util.pathexists(self.linkpath)))
 
-    def __mount(self):
+    def __mount(self, mountpoint=None):
         """Mount the remote CIFS export at 'mountpoint'"""
+        if mountpoint == None:
+            mountpoint = self.mountpoint
+        elif not util.is_string(mountpoint):
+            raise CifsException("mountpoint not a string object")
+
         try:
-            if not util.ioretry(lambda: util.isdir(self.mountpoint)):
-                util.ioretry(lambda: util.makedirs(self.mountpoint))
+            if not util.ioretry(lambda: util.isdir(mountpoint)):
+                util.ioretry(lambda: util.makedirs(mountpoint))
         except util.CommandException, inst:
             raise CifsException("Failed to make directory: code is %d" %
                                 inst.code)
@@ -124,7 +129,7 @@ class CIFSSR(FileSR.FileSR):
         try:
             util.ioretry(lambda:
                 util.pread(["mount.cifs", self.remoteserver,
-                self.mountpoint, "-o", options]),
+                mountpoint, "-o", options]),
                 errlist=[errno.EPIPE, errno.EIO],
                 maxretry=2, nofail=True)
         except util.CommandException, inst:
