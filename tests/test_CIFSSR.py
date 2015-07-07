@@ -46,7 +46,7 @@ class Test_CIFSSR(unittest.TestCase):
 
     #Attach
     @mock.patch('CIFSSR.CIFSSR.checkmount')
-    @mock.patch('CIFSSR._CIFSSR.mount')
+    @mock.patch('CIFSSR.CIFSSR.mount')
     def test_attach_cifsexception_raises_xenerror(self, mock_mount, mock_checkmount):
         cifssr = self.create_cifssr()
         mock_mount = mock.Mock(side_effect=CIFSSR.CifsException("mount raised CifsException"))
@@ -80,3 +80,17 @@ class Test_CIFSSR(unittest.TestCase):
         mock_checkmount = mock.Mock(return_value=False)
         cifssr.detach('asr_uuid')
         self.assertTrue(cifssr.attached)
+
+    #Mount
+    @mock.patch('util.isdir')
+    def test_mount_mountpoint_isdir(self, mock_isdir):
+        mock_isdir = mock.Mock(side_effect=util.CommandException(errno.EIO, "Not a directory"))
+        cifssr = self.create_cifssr()
+        try:
+            cifssr.mount()
+        except Exception, exc:
+            self.assertTrue(isinstance(exc,CIFSSR.CifsException))
+
+    def test_mount_mountpoint_empty_string(self):
+        cifssr = self.create_cifssr()
+        self.assertRaises(CIFSSR.CifsException, cifssr.mount, "")
