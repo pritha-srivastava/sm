@@ -11,15 +11,14 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 # GNU Lesser General Public License for more details.
 #
-# FileSR: local-file storage repository
+# CIFSSR: CIFS filesystem based storage repository
 
-import SR, VDI, SRCommand, NFSSR, FileSR, util
+import SR, VDI, SRCommand, FileSR, util
 import errno
 import os, re, sys
 import xml.dom.minidom
 import xmlrpclib
 import xs_errors
-import nfs
 import vhdutil
 from lock import Lock
 import cleanup
@@ -30,7 +29,7 @@ CAPABILITIES = ["SR_PROBE","SR_UPDATE", "SR_CACHING",
                 "VDI_GENERATE_CONFIG",
                 "VDI_RESET_ON_BOOT/2", "ATOMIC_PAUSE"]
 
-CONFIGURATION = [ [ 'server', 'hostname or IP address of CIFS server (required)' ], \
+CONFIGURATION = [ [ 'server', 'Full path to share root on CIFS server (required)' ], \
                   [ 'username', 'The username to be used during CIFS authentication' ], \
                   [ 'password', 'The password to be used during CIFS authentication' ] ]
 
@@ -47,17 +46,14 @@ DRIVER_INFO = {
 
 DRIVER_CONFIG = {"ATTACH_FROM_CONFIG_WITH_TAPDISK": True}
 
-# The mountpoint for the directory when performing an sr_probe.  All probes
-# are guaranteed to be serialised by xapi, so this single mountpoint is fine.
+class CifsException(Exception):
+    def __init__(self, errstr):
+        self.errstr = errstr
 
-# server = //server/vol1 - ie the export path on the array
-# serverpath = /VMs or '' - the subdir on the array below the export path
-# 
-# remoteserver == server
+# server = //cifs-server/vol1 - ie the export path on the CIFS server 
 # mountpoint = /var/run/sr-mount/CIFS/<cifs_server_name>/<share_name>/uuid
 # path = /var/run/sr-mount/uuid
 # linkpath = mountpoint/uuid 
-
 class CIFSSR(FileSR.FileSR):
     """CIFS file-based storage repository"""
     def handles(type):
@@ -97,7 +93,7 @@ class CIFSSR(FileSR.FileSR):
             if not util.ioretry(lambda: util.isdir(self.mountpoint)):
                 util.ioretry(lambda: util.makedirs(self.mountpoint))
         except util.CommandException, inst:
-            raise nfs.NfsException("Failed to make directory: code is %d" %
+            raise CifsException("Failed to make directory: code is %d" %
                                 inst.code)
 
         options = 'sec=ntlm'
@@ -128,20 +124,20 @@ class CIFSSR(FileSR.FileSR):
                 errlist=[errno.EPIPE, errno.EIO],
                 maxretry=2, nofail=True)
         except util.CommandException, inst:
-            raise nfs.NfsException("mount failed with return code %d" % inst.code)
+            raise CifsException("mount failed with return code %d" % inst.code)
 
     def unmount(self, mountpoint, rmmountpoint):
         """Unmount the remote CIFS export at 'mountpoint'"""
         try:
             util.pread(["umount", mountpoint])
         except util.CommandException, inst:
-            raise nfs.NfsException("umount failed with return code %d" % inst.code)
+            raise CifsException("umount failed with return code %d" % inst.code)
 
         if rmmountpoint:
             try:
                 os.rmdir(mountpoint)
             except OSError, inst:
-                raise nfs.NfsException("rmdir failed with error '%s'" % inst.strerror)
+                raise CifsException("rmdir failed with error '%s'" % inst.strerror)
 
 
     def _extract_server(self):
@@ -180,10 +176,10 @@ class CIFSSR(FileSR.FileSR):
         os.chdir(SR.MOUNT_BASE)
 
         try:
-            os.unlink(self.path)
             self.unmount(self.mountpoint, True)
-        except nfs.NfsException, exc:
-            raise xs_errors.XenError('NFSUnMount', opterr=exc.errstr)
+            os.unlink(self.path)
+        except CifsException, exc:
+            raise xs_errors.XenError('CIFSUnMount', opterr=exc.errstr)
 
         self.attached = False
 
@@ -192,7 +188,7 @@ class CIFSSR(FileSR.FileSR):
         self._check_license()
 
         if self._checkmount():
-            raise xs_errors.XenError('NFSAttached')
+            raise xs_errors.XenError('CIFSAttached')
 
         try:
             self.mount() 
@@ -201,6 +197,7 @@ class CIFSSR(FileSR.FileSR):
                 os.rmdir(self.mountpoint)
             except:
                 pass
+            # TODO: Raise meaningful exception here
             raise exn
 
         if util.ioretry(lambda: util.pathexists(self.linkpath)):
@@ -214,7 +211,7 @@ class CIFSSR(FileSR.FileSR):
             except util.CommandException, inst:
                 if inst.code != errno.EEXIST:
                     self.detach(sr_uuid)
-                    raise xs_errors.XenError('NFSCreate',
+                    raise xs_errors.XenError('CIFSCreate',
                         opterr='remote directory creation error is %d'
                         % inst.code)
         self.detach(sr_uuid)
@@ -233,7 +230,7 @@ class CIFSSR(FileSR.FileSR):
         except util.CommandException, inst:
             self.detach(sr_uuid)
             if inst.code != errno.ENOENT:
-                raise xs_errors.XenError('NFSDelete')
+                raise xs_errors.XenError('CIFSDelete')
 
     def vdi(self, uuid, loadLocked = False):
         if not loadLocked:
@@ -245,7 +242,7 @@ class CIFSFileVDI(FileSR.FileVDI):
         if not hasattr(self,'xenstore_data'):
             self.xenstore_data = {}
             
-        self.xenstore_data["storage-type"]="nfs"
+        self.xenstore_data["storage-type"]="cifs"
 
         return super(CIFSFileVDI, self).attach(sr_uuid, vdi_uuid)
 
@@ -272,7 +269,7 @@ class CIFSFileVDI(FileSR.FileVDI):
             if not util.pathexists(self.sr.path):
                 self.sr.attach(sr_uuid)
         except:
-            util.logException("NFSFileVDI.attach_from_config")
+            util.logException("CIFSFileVDI.attach_from_config")
             raise xs_errors.XenError('SRUnavailable', \
                         opterr='Unable to attach from config')
 
