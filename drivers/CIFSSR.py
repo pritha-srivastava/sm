@@ -47,7 +47,6 @@ DRIVER_INFO = {
 
 DRIVER_CONFIG = {"ATTACH_FROM_CONFIG_WITH_TAPDISK": True}
 
-
 # The mountpoint for the directory when performing an sr_probe.  All probes
 # are guaranteed to be serialised by xapi, so this single mountpoint is fine.
 
@@ -55,13 +54,9 @@ DRIVER_CONFIG = {"ATTACH_FROM_CONFIG_WITH_TAPDISK": True}
 # serverpath = /VMs or '' - the subdir on the array below the export path
 # 
 # remoteserver == server
-# remotepath == serverpath
-# mountpoint = /var/run/sr-mount/CIFS/dns_name_of_server
+# mountpoint = /var/run/sr-mount/CIFS/<cifs_server_name>/<share_name>/uuid
 # path = /var/run/sr-mount/uuid
-# linkpath = mountpoint/remotepath/uuid - (no uuid if no subdir flag set)
-#
-
-CREDFILE='/root/cred'
+# linkpath = mountpoint/uuid 
 
 class CIFSSR(FileSR.FileSR):
     """CIFS file-based storage repository"""
@@ -90,22 +85,11 @@ class CIFSSR(FileSR.FileSR):
         self.path = os.path.join(SR.MOUNT_BASE, sr_uuid)
         self._check_o_direct()
 
-    def _server_is_mounted(self):
-        cmd = ["mount"]
-        lines = util.pread2(cmd)
-        line = []
-        for line in lines.split('\n'):
-            if not len(line):
-               continue
-            if line.split()[2] == self.mountpoint:
-               return True
-        return False 
-
     def _checkmount(self):
-        return True
-#        return util.ioretry(lambda: util.pathexists(self.path) and \
-#                                (util.ismount(self.mountpoint) and \
-#                                 util.pathexists(self.linkpath))
+        return util.ioretry(lambda: ((util.pathexists(self.mountpoint) and \
+				util.ismount(self.mountpoint)) and \
+                                util.pathexists(self.linkpath)))
+
 
     def mount(self):
         """Mount the remote CIFS export at 'mountpoint'"""
@@ -138,12 +122,26 @@ class CIFSSR(FileSR.FileSR):
     
         try:
             util.ioretry(lambda:
-                         util.pread(["mount.cifs", self.remoteserver,
-                                     self.mountpoint, "-o", options]),
-                                     errlist=[errno.EPIPE, errno.EIO],
-                         maxretry=2, nofail=True)
+                util.pread(["mount.cifs", self.remoteserver,
+                self.mountpoint, "-o", options]),
+                errlist=[errno.EPIPE, errno.EIO],
+                maxretry=2, nofail=True)
         except util.CommandException, inst:
             raise nfs.NfsException("mount failed with return code %d" % inst.code)
+
+    def unmount(self, mountpoint, rmmountpoint):
+        """Unmount the remote CIFS export at 'mountpoint'"""
+        try:
+            util.pread(["umount", mountpoint])
+        except util.CommandException, inst:
+            raise nfs.NfsException("umount failed with return code %d" % inst.code)
+
+        if rmmountpoint:
+            try:
+                os.rmdir(mountpoint)
+            except OSError, inst:
+                raise nfs.NfsException("rmdir failed with error '%s'" % inst.strerror)
+
 
     def _extract_server(self):
         return self.remoteserver[2:]
@@ -159,21 +157,13 @@ class CIFSSR(FileSR.FileSR):
                 restrictions['restrict_cifs'] == "true":
             raise xs_errors.XenError('NoCifsLicense')
 
-    def attach(self, sr_uuid):
 
-        if not self._server_is_mounted():
+    def attach(self, sr_uuid):
+        if not self._checkmount():
             self.mount()
-        try:
             os.symlink(self.linkpath, self.path)
-        except:
-            pass
         self.attached = True
 
-    def mount_remotepath(self, sr_uuid, timeout = 0):
-        if not self._checkmount():
-            #TODO: Fix for CIFS
-            #self.check_server()
-            self.mount()
 
     def probe(self):
         pass
@@ -190,33 +180,43 @@ class CIFSSR(FileSR.FileSR):
 
         try:
             os.unlink(self.path)
-        except:
-            pass
+            self.unmount(self.mountpoint, True)
+        except nfs.NfsException, exc:
+            raise xs_errors.XenError('NFSUnMount', opterr=exc.errstr)
 
         self.attached = False
+
         
-
     def create(self, sr_uuid, size):
-
         self._check_license()
 
-        if not self._server_is_mounted():
-            self.mount()
+        if self._checkmount():
+            raise xs_errors.XenError('NFSAttached')
 
-        if not self.nosubdir:
-            if util.ioretry(lambda: util.pathexists(self.linkpath)):
-                if len(util.ioretry(lambda: util.listdir(self.linkpath))) != 0:
+        try:
+            self.mount() 
+        except Exception, exn:
+            try:
+                os.rmdir(self.mountpoint)
+            except:
+                pass
+            raise exn
+
+        if util.ioretry(lambda: util.pathexists(self.linkpath)):
+            if len(util.ioretry(lambda: util.listdir(self.linkpath))) != 0:
+                self.detach(sr_uuid)
+                raise xs_errors.XenError('SRExists')
+        else:
+            try:
+                util.ioretry(lambda: util.makedirs(self.linkpath))
+                os.symlink(self.linkpath, self.path)
+            except util.CommandException, inst:
+                if inst.code != errno.EEXIST:
                     self.detach(sr_uuid)
-                    raise xs_errors.XenError('SRExists')
-            else:
-                try:
-                    util.ioretry(lambda: util.makedirs(self.linkpath))
-                except util.CommandException, inst:
-                    if inst.code != errno.EEXIST:
-                        self.detach(sr_uuid)
-                        raise xs_errors.XenError('NFSCreate',
-                            opterr='remote directory creation error is %d'
-                            % inst.code)
+                    raise xs_errors.XenError('NFSCreate',
+                        opterr='remote directory creation error is %d'
+                        % inst.code)
+        self.detach(sr_uuid)
 
     def delete(self, sr_uuid):
         # try to remove/delete non VDI contents first
@@ -225,15 +225,10 @@ class CIFSSR(FileSR.FileSR):
             if self._checkmount():
                 self.detach(sr_uuid)
 
-            # Set the target path temporarily to the base dir
-            # so that we can remove the target SR directory
-            self.remotepath = self.dconf['serverpath']
-            self.mount_remotepath(sr_uuid)
-            if not self.nosubdir:
-                newpath = os.path.join(self.path, sr_uuid)
-                if util.ioretry(lambda: util.pathexists(newpath)):
-                    util.ioretry(lambda: os.rmdir(newpath))
-            #self.detach(sr_uuid)
+            self.mount()
+            if util.ioretry(lambda: util.pathexists(self.linkpath)):
+                util.ioretry(lambda: os.rmdir(self.linkpath))
+            self.unmount(self.mountpoint, True)
         except util.CommandException, inst:
             self.detach(sr_uuid)
             if inst.code != errno.ENOENT:
