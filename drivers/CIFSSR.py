@@ -275,10 +275,15 @@ class CIFSSR(FileSR.FileSR):
                 os.symlink(self.linkpath, self.path)
             except util.CommandException, inst:
                 if inst.code != errno.EEXIST:
-                    self.detach(sr_uuid)
-                    raise xs_errors.XenError('CIFSCreate',
-                        opterr='remote directory creation error is %d'
-                        % inst.code)
+                    try:
+                        self.unmount(self.mountpoint, True)
+                    except CifsException:
+                        util.logException('CIFSSR.unmount()')
+                    raise xs_errors.XenError(
+                            'CIFSCreate',
+                            opterr="remote directory creation error: {}"
+                                    .format(os.strerror(inst.code))
+                    )
         self.detach(sr_uuid)
 
     def delete(self, sr_uuid):
