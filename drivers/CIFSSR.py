@@ -24,8 +24,6 @@ import vhdutil
 from lock import Lock
 import cleanup
 
-#import rpdb2
-
 CAPABILITIES = ["SR_PROBE","SR_UPDATE", "SR_CACHING",
                 "VDI_CREATE","VDI_DELETE","VDI_ATTACH","VDI_DETACH",
                 "VDI_UPDATE", "VDI_CLONE","VDI_SNAPSHOT","VDI_RESIZE",
@@ -33,8 +31,8 @@ CAPABILITIES = ["SR_PROBE","SR_UPDATE", "SR_CACHING",
                 "VDI_RESET_ON_BOOT/2", "ATOMIC_PAUSE"]
 
 CONFIGURATION = [ [ 'server', 'hostname or IP address of CIFS server (required)' ], \
-                  [ 'serverpath', 'path on remote server (required)' ] ]
-
+                  [ 'username', 'The username to be used during CIFS authentication' ], \
+                  [ 'password', 'The password to be used during CIFS authentication' ] ]
 
 DRIVER_INFO = {
     'name': 'CIFS VHD',
@@ -85,9 +83,8 @@ class CIFSSR(FileSR.FileSR):
         else:
             self.sm_config = self.srcmd.params.get('sr_sm_config') or {}
         self.nosubdir = self.sm_config.get('nosubdir') == "true"
-        if self.dconf.has_key('serverpath'):
-            self.remotepath = self.dconf['serverpath']
-        self.mountpoint = os.path.join(SR.MOUNT_BASE, 'CIFS', self._extract_server())
+        self.credentials = None
+        self.mountpoint = os.path.join(SR.MOUNT_BASE, 'CIFS', self._extract_server(), sr_uuid)
         self.linkpath = os.path.join(self.mountpoint, 
                                            not self.nosubdir and sr_uuid or "")
         self.path = os.path.join(SR.MOUNT_BASE, sr_uuid)
@@ -100,7 +97,7 @@ class CIFSSR(FileSR.FileSR):
         for line in lines.split('\n'):
             if not len(line):
                continue
-            if line.split()[0] == self.remoteserver:
+            if line.split()[2] == self.mountpoint:
                return True
         return False 
 
@@ -118,10 +115,26 @@ class CIFSSR(FileSR.FileSR):
         except util.CommandException, inst:
             raise nfs.NfsException("Failed to make directory: code is %d" %
                                 inst.code)
-    
-        options = 'credentials=%s' % CREDFILE
-        options += ',sec=ntlm'
+
+        options = 'sec=ntlm'
         options += ',cache=none'
+
+        self.credentials = os.path.join("/tmp", util.gen_uuid())
+
+        if self.dconf.has_key('username') \
+                and self.dconf.has_key('password'):
+            username = self.dconf['username'].replace("\\","/")
+            password = self.dconf['password']
+
+            username = util.to_plain_string(username)
+            password = util.to_plain_string(password)
+
+            # Open credentials file and truncate
+            f = open(self.credentials, 'w')
+            f.write("username=%s\npassword=%s\n" % (username,password))
+            f.close()
+
+            options += ',credentials=%s' % self.credentials
     
         try:
             util.ioretry(lambda:
