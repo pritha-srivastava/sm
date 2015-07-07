@@ -102,6 +102,7 @@ class CIFSSR(FileSR.FileSR):
 
         options = 'sec=ntlm'
         options += ',cache=none'
+        options += ',vers=3.0'
 
         self.credentials = os.path.join("/tmp", util.gen_uuid())
 
