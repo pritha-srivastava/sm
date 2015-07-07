@@ -50,6 +50,10 @@ DRIVER_INFO = {
 
 DRIVER_CONFIG = {"ATTACH_FROM_CONFIG_WITH_TAPDISK": True}
 
+# The mountpoint for the directory when performing an sr_probe.  All probes
+# are guaranteed to be serialised by xapi, so this single mountpoint is fine.
+PROBE_MOUNTPOINT = os.path.join(SR.MOUNT_BASE, "probe")
+
 class CifsException(Exception):
     def __init__(self, errstr):
         self.errstr = errstr
@@ -172,8 +176,22 @@ class CIFSSR(FileSR.FileSR):
         self.attached = True
 
     def probe(self):
-        #TODO: Implement probe
-        pass
+        try:
+            self.check_dconf(['username', 'password'])
+            err = "CIFSMount"
+            self.__mount(PROBE_MOUNTPOINT)
+            sr_list = filter(util.match_uuid, util.listdir(PROBE_MOUNTPOINT))
+            err = "CIFSUnMount"
+            self.__unmount(PROBE_MOUNTPOINT, True)
+        except CifsException, inst:
+            raise xs_errors.XenError(err, opterr=inst.errstr)
+        except (util.CommandException, xs_errors.XenError):
+            raise
+
+        # Create a dictionary from the SR uuids to feed SRtoXML()
+        sr_dict = {sr_uuid : {} for sr_uuid in sr_list}
+
+        return util.SRtoXML(sr_dict)
 
     def detach(self, sr_uuid):
         """Detach the SR: Unmounts and removes the mountpoint"""
