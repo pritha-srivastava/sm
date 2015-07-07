@@ -90,12 +90,12 @@ class CIFSSR(FileSR.FileSR):
         self.path = os.path.join(SR.MOUNT_BASE, sr_uuid)
         self._check_o_direct()
 
-    def __checkmount(self):
+    def checkmount(self):
         return util.ioretry(lambda: ((util.pathexists(self.mountpoint) and \
 				util.ismount(self.mountpoint)) and \
                                 util.pathexists(self.linkpath)))
 
-    def __mount(self, mountpoint=None):
+    def mount(self, mountpoint=None):
         """Mount the remote CIFS export at 'mountpoint'"""
         if mountpoint == None:
             mountpoint = self.mountpoint
@@ -166,7 +166,7 @@ class CIFSSR(FileSR.FileSR):
         except OSError, inst:
             util.SMlog("Error when trying to delete credentials files /tmp/<uuid>")
  
-    def __unmount(self, mountpoint, rmmountpoint):
+    def unmount(self, mountpoint, rmmountpoint):
         """Unmount the remote CIFS export at 'mountpoint'"""
         try:
             util.pread(["umount", mountpoint])
@@ -194,9 +194,9 @@ class CIFSSR(FileSR.FileSR):
             raise xs_errors.XenError('NoCifsLicense')
 
     def attach(self, sr_uuid):
-        if not self.__checkmount():
+        if not self.checkmount():
             try: 
-                self.__mount()
+                self.mount()
                 os.symlink(self.linkpath, self.path)
             except CifsException, exc:
                 raise xs_errors.XenError('CIFSMount', opterr=exc.errstr)
@@ -205,10 +205,10 @@ class CIFSSR(FileSR.FileSR):
     def probe(self):
         try:
             err = "CIFSMount"
-            self.__mount(PROBE_MOUNTPOINT)
+            self.mount(PROBE_MOUNTPOINT)
             sr_list = filter(util.match_uuid, util.listdir(PROBE_MOUNTPOINT))
             err = "CIFSUnMount"
-            self.__unmount(PROBE_MOUNTPOINT, True)
+            self.unmount(PROBE_MOUNTPOINT, True)
         except CifsException, inst:
             raise xs_errors.XenError(err, opterr=inst.errstr)
         except (util.CommandException, xs_errors.XenError):
@@ -221,7 +221,7 @@ class CIFSSR(FileSR.FileSR):
 
     def detach(self, sr_uuid):
         """Detach the SR: Unmounts and removes the mountpoint"""
-        if not self.__checkmount():
+        if not self.checkmount():
             return
         util.SMlog("Aborting GC/coalesce")
         cleanup.abort(self.uuid)
@@ -230,7 +230,7 @@ class CIFSSR(FileSR.FileSR):
         os.chdir(SR.MOUNT_BASE)
 
         try:
-            self.__unmount(self.mountpoint, True)
+            self.unmount(self.mountpoint, True)
             os.unlink(self.path)
         except CifsException, exc:
             raise xs_errors.XenError('CIFSUnMount', opterr=exc.errstr)
@@ -240,11 +240,11 @@ class CIFSSR(FileSR.FileSR):
     def create(self, sr_uuid, size):
         self.__check_license()
 
-        if self.__checkmount():
+        if self.checkmount():
             raise xs_errors.XenError('CIFSAttached')
 
         try:
-            self.__mount()
+            self.mount()
         except CifsException, exc:
             try:
                 os.rmdir(self.mountpoint)
@@ -272,13 +272,13 @@ class CIFSSR(FileSR.FileSR):
         # try to remove/delete non VDI contents first
         super(CIFSSR, self).delete(sr_uuid)
         try:
-            if self.__checkmount():
+            if self.checkmount():
                 self.detach(sr_uuid)
 
-            self.__mount()
+            self.mount()
             if util.ioretry(lambda: util.pathexists(self.linkpath)):
                 util.ioretry(lambda: os.rmdir(self.linkpath))
-            self.__unmount(self.mountpoint, True)
+            self.unmount(self.mountpoint, True)
         except util.CommandException, inst:
             self.detach(sr_uuid)
             if inst.code != errno.ENOENT:
